@@ -1,0 +1,34 @@
+{
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Credentials", "value": "true" },
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET,OPTIONS,PATCH,DELETE,POST,PUT" },
+        { "key": "Access-Control-Allow-Headers", "value": "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version" }
+      ]
+    }
+  ]
+}
+```
+
+## 🐛 **Debugging**
+
+Abre la consola del navegador (F12) y verás:
+- `Fetching data for wallet: 0x...` - Cuando empieza a cargar
+- `State data:` - Respuesta del clearinghouse
+- `Fills data:` - Respuesta de los fills
+- Cualquier error de API
+
+## 📝 **Prueba con la Wallet de Ejemplo**
+
+Añade esta wallet para probar:
+```
+0xcd1a5fb7c3a5ad2a13fce54853b3c3a01396e525
