@@ -9,9 +9,6 @@ import { LineChart, Line, ResponsiveContainer } from 'recharts';
 // Tu RPC de QuickNode
 const QUICKNODE_RPC = 'https://withered-red-isle.hype-mainnet.quiknode.pro/0427da894d1271966f715dc78fd65eadc08c3571/evm';
 
-// Dirección del contrato de HYPE (necesitarás la correcta)
-const HYPE_TOKEN_ADDRESS = '0x...'; // Actualizar con la dirección real
-
 // Utilidades de tiempo
 const formatTimeRemaining = (milliseconds) => {
   if (milliseconds <= 0) return { days: 0, hours: 0, minutes: 0, seconds: 0, total: 0 };
@@ -91,32 +88,10 @@ const callRPC = async (method, params = []) => {
 const getNativeBalance = async (address) => {
   try {
     const balance = await callRPC('eth_getBalance', [address, 'latest']);
-    // Convertir de wei a ether (18 decimals)
     const balanceInEther = parseInt(balance, 16) / 1e18;
     return balanceInEther;
   } catch (error) {
     console.error('Error getting native balance:', error);
-    return 0;
-  }
-};
-
-// Función para obtener balance de token ERC20
-const getTokenBalance = async (walletAddress, tokenAddress) => {
-  try {
-    // balanceOf(address) selector: 0x70a08231
-    const data = '0x70a08231' + walletAddress.slice(2).padStart(64, '0');
-    
-    const balance = await callRPC('eth_call', [
-      {
-        to: tokenAddress,
-        data: data
-      },
-      'latest'
-    ]);
-
-    return parseInt(balance, 16) / 1e18;
-  } catch (error) {
-    console.error('Error getting token balance:', error);
     return 0;
   }
 };
@@ -133,7 +108,6 @@ const fetchHyperliquidAPI = async (payload) => {
     });
 
     if (!response.ok) {
-      // Intentar con proxy CORS
       const proxyResponse = await fetch('https://corsproxy.io/?' + encodeURIComponent('https://api.hyperliquid.xyz/info'), {
         method: 'POST',
         headers: { 
@@ -201,7 +175,6 @@ const HyperliquidDashboard = () => {
   const [filterTag, setFilterTag] = useState('');
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
 
-  // Cargar wallets y sales tracking desde localStorage
   useEffect(() => {
     const savedWallets = localStorage.getItem('hyperliquid_wallets');
     const savedTracking = localStorage.getItem('hyperliquid_sales_tracking');
@@ -223,30 +196,25 @@ const HyperliquidDashboard = () => {
     }
   }, []);
 
-  // Guardar wallets en localStorage
   useEffect(() => {
     if (wallets.length > 0) {
       localStorage.setItem('hyperliquid_wallets', JSON.stringify(wallets));
     }
   }, [wallets]);
 
-  // Guardar sales tracking en localStorage
   useEffect(() => {
     if (Object.keys(salesTracking).length > 0) {
       localStorage.setItem('hyperliquid_sales_tracking', JSON.stringify(salesTracking));
     }
   }, [salesTracking]);
 
-  // Fetch datos de una wallet específica
   const fetchWalletData = async (wallet) => {
     try {
       console.log(`Fetching data for wallet: ${wallet.address}`);
 
-      // 1. Obtener balance nativo de HYPE (en la blockchain)
       const nativeBalance = await getNativeBalance(wallet.address);
       console.log('Native HYPE balance:', nativeBalance);
 
-      // 2. Obtener datos del clearinghouse (exchange)
       let stateData = { balances: [], withdraws: [], staking: '0' };
       try {
         stateData = await fetchHyperliquidAPI({
@@ -258,7 +226,6 @@ const HyperliquidDashboard = () => {
         console.warn('Could not fetch clearinghouse state:', e);
       }
 
-      // 3. Obtener fills (trades)
       let fillsData = [];
       try {
         fillsData = await fetchHyperliquidAPI({
@@ -270,10 +237,8 @@ const HyperliquidDashboard = () => {
         console.warn('Could not fetch fills:', e);
       }
 
-      // Procesar balances
       const exchangeBalances = stateData.balances || [];
       
-      // Combinar balance on-chain + exchange
       const allBalances = [
         {
           coin: 'HYPE (Wallet)',
@@ -289,7 +254,6 @@ const HyperliquidDashboard = () => {
         }))
       ];
 
-      // Balance total de HYPE
       const walletHype = nativeBalance;
       const exchangeHype = parseFloat(exchangeBalances.find(b => b.coin === 'HYPE')?.hold || '0');
       const totalHypeBalance = walletHype + exchangeHype;
@@ -299,22 +263,18 @@ const HyperliquidDashboard = () => {
       const oneHourAgo = Date.now() - (60 * 60 * 1000);
       const twelveHoursAgo = Date.now() - (12 * 60 * 60 * 1000);
       
-      // Filtrar fills de HYPE
       const hypeFills = fillsData.filter(fill => fill.coin === 'HYPE');
       
-      // Filtrar fills recientes (última hora)
       const recentHypeFills = hypeFills.filter(fill => {
         const fillTime = parseInt(fill.time);
         return fillTime >= oneHourAgo;
       });
 
-      // Filtrar fills de últimas 12 horas
       const last12HoursFills = hypeFills.filter(fill => {
         const fillTime = parseInt(fill.time);
         return fillTime >= twelveHoursAgo;
       });
 
-      // Calcular volumen vendido en la última hora
       const volumeSoldLastHour = recentHypeFills.reduce((total, fill) => {
         if (fill.side === 'A') {
           return total + parseFloat(fill.sz);
@@ -322,7 +282,6 @@ const HyperliquidDashboard = () => {
         return total;
       }, 0);
 
-      // Verificar si el unstaking acaba de completarse
       const prevData = walletData[wallet.id];
       const prevWithdrawals = prevData?.withdraws || [];
       const currentWithdrawals = stateData.withdraws || [];
@@ -341,7 +300,6 @@ const HyperliquidDashboard = () => {
         }));
       }
 
-      // Actualizar datos de la wallet
       setWalletData(prev => ({
         ...prev,
         [wallet.id]: {
@@ -374,7 +332,6 @@ const HyperliquidDashboard = () => {
     }
   };
 
-  // Fetch inicial de todas las wallets
   useEffect(() => {
     if (wallets.length === 0) return;
 
@@ -393,7 +350,6 @@ const HyperliquidDashboard = () => {
     return () => clearInterval(interval);
   }, [wallets.length]);
 
-  // Refrescar todas las wallets manualmente
   const handleRefreshAll = async () => {
     setIsRefreshing(true);
     
@@ -479,17 +435,11 @@ const HyperliquidDashboard = () => {
     }
   };
 
-  // Obtener etiquetas únicas
   const uniqueTags = [...new Set(wallets.map(w => w.label))].sort();
-
-  // Filtrar wallets por etiqueta
-  const filteredWallets = filterTag 
-    ? wallets.filter(w => w.label === filterTag)
-    : wallets;
+  const filteredWallets = filterTag ? wallets.filter(w => w.label === filterTag) : wallets;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      {/* Header */}
       <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -506,7 +456,6 @@ const HyperliquidDashboard = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {/* Botón de Actualizar Todo */}
             <button
               onClick={handleRefreshAll}
               disabled={isRefreshing}
@@ -519,7 +468,6 @@ const HyperliquidDashboard = () => {
               </span>
             </button>
             
-            {/* Filtro por Etiqueta */}
             <div className="relative">
               <button
                 onClick={() => setShowFilterDropdown(!showFilterDropdown)}
@@ -594,7 +542,6 @@ const HyperliquidDashboard = () => {
       </header>
 
       <div className="flex">
-        {/* Sidebar - Mantengo el código igual */}
         <aside className={`
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
           lg:translate-x-0 fixed lg:static inset-y-0 left-0 z-20
@@ -690,7 +637,6 @@ const HyperliquidDashboard = () => {
                         </div>
                       </div>
                       
-                      {/* Status indicator */}
                       <div className="mt-2">
                         {loading[wallet.id] ? (
                           <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -732,7 +678,6 @@ const HyperliquidDashboard = () => {
           </div>
         </aside>
 
-        {/* Main Content */}
         <main className="flex-1 p-6 lg:p-8">
           {filteredWallets.length === 0 ? (
             <div className="flex items-center justify-center h-[calc(100vh-200px)]">
@@ -776,7 +721,6 @@ const HyperliquidDashboard = () => {
         </main>
       </div>
 
-      {/* Overlays */}
       {sidebarOpen && (
         <div
           className="lg:hidden fixed inset-0 bg-black/50 z-10"
@@ -794,18 +738,10 @@ const HyperliquidDashboard = () => {
   );
 };
 
-// Componente WalletCard - Actualizado para mostrar balances correctamente
+// Componente WalletCard
 const WalletCard = ({ wallet, data, tracking, loading, onDelete, onUpdateLabel, onResetTracking }) => {
   const [isEditingLabel, setIsEditingLabel] = useState(false);
   const [editedLabel, setEditedLabel] = useState(wallet.label);
-  const [currentTime, setCurrentTime] = useState(Date.now());
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentTime(Date.now());
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
 
   const handleSaveLabel = () => {
     onUpdateLabel(wallet.id, editedLabel);
@@ -817,72 +753,11 @@ const WalletCard = ({ wallet, data, tracking, loading, onDelete, onUpdateLabel, 
     setIsEditingLabel(false);
   };
 
-  // Procesar datos
-  const stakingAmount = data?.staking ? parseFloat(data.staking) : 0;
-  const pendingWithdrawals = data?.withdraws || [];
-  const hasPendingWithdrawal = pendingWithdrawals.length > 0;
   const tokenBalances = data?.tokenBalances || [];
   const walletHype = data?.walletHype || 0;
   const exchangeHype = data?.exchangeHype || 0;
   const totalHype = data?.totalHypeBalance || 0;
 
-  // Calcular datos del retiro pendiente
-  let withdrawalData = null;
-  if (hasPendingWithdrawal) {
-    const withdrawal = pendingWithdrawals[0];
-    const startTime = parseInt(withdrawal.time);
-    const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-    const endTime = startTime + SEVEN_DAYS_MS;
-    const timeRemaining = formatTimeRemaining(endTime - currentTime);
-    const progress = calculateProgress(startTime, endTime);
-    const isReady = timeRemaining.total <= 0;
-
-    withdrawalData = {
-      amount: parseFloat(withdrawal.amount),
-      startTime,
-      endTime,
-      timeRemaining,
-      progress,
-      isReady
-    };
-  }
-
-  // Calcular datos de venta
-  let salesData = null;
-  if (tracking && data?.totalHypeBalance !== undefined) {
-    const initialBalance = tracking.initialBalance;
-    const currentBalance = data.totalHypeBalance;
-    const sold = Math.max(0, initialBalance - currentBalance);
-    const soldPercentage = initialBalance > 0 ? (sold / initialBalance) * 100 : 0;
-    const volumeLastHour = data.volumeSoldLastHour || 0;
-    
-    let eta = null;
-    if (volumeLastHour > 0 && currentBalance > 0) {
-      const hoursToEmpty = currentBalance / volumeLastHour;
-      eta = hoursToEmpty * 60 * 60 * 1000;
-    }
-
-    const isSelling = volumeLastHour > 0;
-    const isHolding = volumeLastHour === 0 && currentBalance > 0;
-
-    salesData = {
-      initialBalance,
-      currentBalance,
-      sold,
-      soldPercentage,
-      volumeLastHour,
-      eta,
-      isSelling,
-      isHolding
-    };
-  }
-
-  // Generar datos para sparkline
-  const sparklineData = tracking && data?.hypeFills 
-    ? generateSparklineData(tracking, data.totalHypeBalance, data.hypeFills, 12)
-    : [];
-
-  // Determinar estado
   let status = 'inactive';
   let statusText = 'Sin actividad';
 
@@ -892,37 +767,20 @@ const WalletCard = ({ wallet, data, tracking, loading, onDelete, onUpdateLabel, 
   } else if (data?.error) {
     status = 'error';
     statusText = 'Error';
-  } else if (salesData?.isSelling) {
-    status = 'selling';
-    statusText = 'SELLING';
-  } else if (salesData?.isHolding) {
-    status = 'holding';
-    statusText = 'HOLDING';
-  } else if (withdrawalData?.isReady) {
-    status = 'ready';
-    statusText = 'Listo para retirar';
-  } else if (hasPendingWithdrawal) {
-    status = 'unstaking';
-    statusText = 'Unstaking';
-  } else if (stakingAmount > 0) {
-    status = 'staked';
-    statusText = 'Staked';
+  } else if (totalHype > 0) {
+    status = 'active';
+    statusText = 'Activa';
   }
 
   const statusStyles = {
     loading: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
     error: 'bg-red-500/10 text-red-400 border-red-500/20',
-    selling: 'bg-red-500/10 text-red-400 border-red-500/20 animate-pulse',
-    holding: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
-    ready: 'bg-green-500/10 text-green-400 border-green-500/20',
-    unstaking: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
-    staked: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+    active: 'bg-green-500/10 text-green-400 border-green-500/20',
     inactive: 'bg-slate-500/10 text-slate-400 border-slate-500/20'
   };
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-slate-700 transition-all">
-      {/* Header */}
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <Wallet className="w-5 h-5 text-blue-500 flex-shrink-0" />
@@ -951,26 +809,19 @@ const WalletCard = ({ wallet, data, tracking, loading, onDelete, onUpdateLabel, 
         </button>
       </div>
 
-      {/* Dirección */}
       <div className="bg-slate-800 rounded-lg p-3 mb-4">
         <p className="text-xs font-mono text-slate-400 break-all">
           {wallet.address}
         </p>
       </div>
 
-      {/* Estado Badge */}
       <div className={`border rounded-lg px-3 py-2 mb-4 flex items-center gap-2 ${statusStyles[status]}`}>
         {status === 'loading' && <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />}
-        {status === 'selling' && <TrendingDown className="w-4 h-4" />}
-        {status === 'holding' && <Pause className="w-4 h-4" />}
-        {status === 'ready' && <CheckCircle2 className="w-4 h-4" />}
-        {status === 'unstaking' && <Clock className="w-4 h-4" />}
-        {status === 'staked' && <CheckCircle2 className="w-4 h-4" />}
         {status === 'error' && <AlertCircle className="w-4 h-4" />}
+        {status === 'active' && <CheckCircle2 className="w-4 h-4" />}
         <span className="text-sm font-medium">{statusText}</span>
       </div>
 
-      {/* HYPE Balance Summary */}
       {totalHype > 0 && (
         <div className="mb-4 bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-lg p-4 border border-blue-500/20">
           <div className="flex items-center gap-2 mb-3">
@@ -1000,7 +851,6 @@ const WalletCard = ({ wallet, data, tracking, loading, onDelete, onUpdateLabel, 
         </div>
       )}
 
-      {/* Token Balances Completos */}
       {tokenBalances.length > 0 && (
         <div className="mb-4 bg-slate-800/50 rounded-lg p-4 border border-slate-700">
           <div className="flex items-center gap-2 mb-3">
@@ -1033,9 +883,6 @@ const WalletCard = ({ wallet, data, tracking, loading, onDelete, onUpdateLabel, 
         </div>
       )}
 
-      {/* Resto del código del card (sparkline, sales tracking, etc.) igual que antes... */}
-      
-      {/* Acciones */}
       <div className="flex gap-2 mt-4">
         {isEditingLabel ? (
           <>
@@ -1063,7 +910,6 @@ const WalletCard = ({ wallet, data, tracking, loading, onDelete, onUpdateLabel, 
         )}
       </div>
 
-      {/* Error display */}
       {data?.error && (
         <div className="mt-3 bg-red-500/10 border border-red-500/20 rounded-lg p-3">
           <p className="text-xs text-red-400">{data.error}</p>
@@ -1074,31 +920,3 @@ const WalletCard = ({ wallet, data, tracking, loading, onDelete, onUpdateLabel, 
 };
 
 export default HyperliquidDashboard;
-```
-
-## 🔑 **Cambios Clave:**
-
-### 1. **Integración RPC QuickNode**
-- Función `callRPC()` para llamadas JSON-RPC
-- `getNativeBalance()` obtiene balance nativo (HYPE en wallet)
-- `getTokenBalance()` para tokens ERC20 (si necesitas)
-
-### 2. **Doble Tracking**
-- **Balance On-chain**: HYPE en la wallet (RPC)
-- **Balance Exchange**: HYPE en Hyperliquid Exchange (API Info)
-- **Balance Total**: Suma de ambos
-
-### 3. **Visualización Mejorada**
-- Resumen grande con balance total
-- Separación "En Wallet" vs "En Exchange"
-- Badge "On-chain" para balances de wallet
-- Colores distintivos (verde=wallet, azul=exchange)
-
-## 🧪 **Testing**
-
-Abre la consola (F12) y verás:
-```
-Fetching data for wallet: 0x...
-Native HYPE balance: 1234.56
-Clearinghouse state: {...}
-Total HYPE: {wallet: 1234.56, exchange: 789.12, total: 2023.68}
