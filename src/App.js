@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Wallet, Plus, TrendingUp, Timer, Activity, RefreshCw, Trash2, AlertCircle, Shield Check } from 'lucide-react';
+import { 
+  Wallet, Plus, TrendingUp, Timer, Activity, RefreshCw, Trash2, AlertCircle 
+} from 'lucide-react';
 
 const PROXY = 'https://api.allorigins.win/raw?url=';
 const API_BASE = 'https://api.hyperliquid.xyz/info';
@@ -25,7 +27,7 @@ const WalletCard = ({ wallet, onRemove }) => {
       });
       const spotData = await resSpot.json();
 
-      // 2. Consultar Staking Activo (Delegaciones)
+      // 2. Consultar Staking Activo
       const resStake = await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -33,14 +35,9 @@ const WalletCard = ({ wallet, onRemove }) => {
       });
       const stakeData = await resStake.json();
 
-      // Procesar Balances
       const hypeSpot = spotData?.balances?.find(b => b.coin === 'HYPE');
       const usdcSpot = spotData?.balances?.find(b => b.coin === 'USDC');
-      
-      // Sumar todo el staking activo
-      const totalStaked = stakeData?.reduce((acc, curr) => acc + parseFloat(curr.amount), 0) || 0;
-      
-      // Ver si hay retiros en curso
+      const totalStaked = Array.isArray(stakeData) ? stakeData.reduce((acc, curr) => acc + parseFloat(curr.amount), 0) : 0;
       const unbondingAmount = spotData?.unbonding?.reduce((acc, curr) => acc + parseFloat(curr.amount), 0) || 0;
 
       setData({
@@ -70,7 +67,7 @@ const WalletCard = ({ wallet, onRemove }) => {
       <div className="flex justify-between items-start mb-6">
         <div>
           <h3 className="text-white font-bold text-lg leading-tight">{wallet.label}</h3>
-          <p className="text-[10px] text-slate-500 font-mono">{wallet.address}</p>
+          <p className="text-[10px] text-slate-500 font-mono break-all">{wallet.address}</p>
         </div>
         <button onClick={() => onRemove(wallet.id)} className="text-slate-600 hover:text-red-500 transition-colors p-1">
           <Trash2 className="w-4 h-4" />
@@ -78,7 +75,6 @@ const WalletCard = ({ wallet, onRemove }) => {
       </div>
 
       <div className="grid grid-cols-1 gap-3">
-        {/* FILA 1: DISPONIBLE Y USDC */}
         <div className="grid grid-cols-2 gap-3">
           <div className="bg-slate-950/50 p-3 rounded-xl border border-slate-800/50">
             <p className="text-blue-500 text-[10px] uppercase font-bold mb-1">HYPE Disponible</p>
@@ -90,7 +86,6 @@ const WalletCard = ({ wallet, onRemove }) => {
           </div>
         </div>
 
-        {/* FILA 2: STAKING Y RETIROS */}
         <div className="bg-blue-600/5 border border-blue-500/20 p-4 rounded-xl">
           <div className="flex justify-between items-center mb-2">
             <span className="text-xs font-bold text-blue-400 flex items-center gap-1">
@@ -111,13 +106,20 @@ const WalletCard = ({ wallet, onRemove }) => {
           <span>{data.lastUpdate ? `Actualizado: ${data.lastUpdate}` : 'Cargando...'}</span>
           {data.spot > 1 && <span className="text-red-500 animate-pulse font-bold">POSIBLE VENTA</span>}
         </div>
+        {error && <p className="text-red-500 text-[10px] mt-1 italic leading-none text-center">*{error}</p>}
       </div>
     </div>
   );
 };
 
 export default function App() {
-  const [wallets, setWallets] = useState(() => JSON.parse(localStorage.getItem('hl_wallets') || '[]'));
+  const [wallets, setWallets] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('hl_wallets') || '[]');
+    } catch {
+      return [];
+    }
+  });
   const [inputAddr, setInputAddr] = useState('');
   const [inputLabel, setInputLabel] = useState('');
 
@@ -133,6 +135,8 @@ export default function App() {
     setInputAddr(''); setInputLabel('');
   };
 
+  const removeWallet = (id) => setWallets(wallets.filter(x => x.id !== id));
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 p-4 md:p-10 font-sans">
       <div className="max-w-6xl mx-auto">
@@ -146,37 +150,3 @@ export default function App() {
           </div>
 
           <form onSubmit={addWallet} className="flex flex-wrap gap-3 bg-slate-900/50 p-4 rounded-3xl border border-slate-800 backdrop-blur-sm">
-            <input 
-              placeholder="Dirección 0x..." 
-              className="bg-slate-950 border border-slate-800 rounded-2xl px-5 py-3 text-sm focus:border-blue-500 outline-none w-full md:w-72 transition-all"
-              value={inputAddr} onChange={(e) => setInputAddr(e.target.value)}
-            />
-            <input 
-              placeholder="Alias" 
-              className="bg-slate-950 border border-slate-800 rounded-2xl px-5 py-3 text-sm focus:border-blue-500 outline-none w-full md:w-32 transition-all"
-              value={inputLabel} onChange={(e) => setInputLabel(e.target.value)}
-            />
-            <button className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-2xl text-sm font-bold transition-all shadow-lg shadow-blue-600/20">
-              Añadir
-            </button>
-          </form>
-        </header>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {wallets.map(w => (
-            <WalletCard 
-              key={w.id} 
-              wallet={w} 
-              onRemove={(id) => setWallets(wallets.filter(x => x.id !== id))} 
-            />
-          ))}
-          {wallets.length === 0 && (
-            <div className="col-span-full border-2 border-dashed border-slate-800 rounded-[40px] py-32 text-center text-slate-600 italic">
-              Pega una dirección de Hyperliquid para monitorizar sus movimientos
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
