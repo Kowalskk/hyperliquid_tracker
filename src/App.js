@@ -6,17 +6,6 @@ import {
 
 const QUICKNODE_RPC = 'https://withered-red-isle.hype-mainnet.quiknode.pro/0427da894d1271966f715dc78fd65eadc08c3571/evm';
 
-// DATOS DE EJEMPLO PARA LA WALLET
-const EXAMPLE_STAKING = {
-  '0x81501f4da49c18bb3f69e4abfeb4d2346ac5fce8': {
-    staked: 5503092.35,
-    withdrawals: [{
-      amount: '228121.63863',
-      time: '1736771200000' // 4 días atrás
-    }]
-  }
-};
-
 const formatTimeRemaining = (milliseconds) => {
   if (milliseconds <= 0) return { days: 0, hours: 0, minutes: 0, seconds: 0, total: 0 };
   
@@ -82,6 +71,20 @@ const getNativeBalance = async (address) => {
   } catch (error) {
     console.error('Error getting native balance:', error);
     return 0;
+  }
+};
+
+// Función para obtener staking desde nuestro backend
+const getStakingData = async (address) => {
+  try {
+    const response = await fetch(`/api/staking?address=${address}`);
+    if (!response.ok) throw new Error('Failed to fetch staking data');
+    const data = await response.json();
+    console.log('Staking data from API:', data);
+    return data;
+  } catch (error) {
+    console.error('Error fetching staking:', error);
+    return { staked: 0, withdrawals: [] };
   }
 };
 
@@ -167,9 +170,8 @@ function HyperliquidDashboard() {
         console.warn('Could not fetch spot state:', e);
       }
 
-      // OBTENER DATOS DE STAKING (hardcodeados por ahora)
-      const stakingInfo = EXAMPLE_STAKING[wallet.address.toLowerCase()] || { staked: 0, withdrawals: [] };
-      console.log('Staking info:', stakingInfo);
+      // OBTENER DATOS DE STAKING desde nuestro backend
+      const stakingInfo = await getStakingData(wallet.address);
 
       let fillsData = [];
       try {
@@ -412,8 +414,8 @@ function HyperliquidDashboard() {
               Añadir Wallet
             </h2>
             <form onSubmit={handleAddWallet} className="space-y-4">
-              <input type="text" value={newAddress} onChange={(e) => setNewAddress(e.target.value)} placeholder="0x81501f4da49c18bb3f69e4abfeb4d2346ac5fce8" className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              <input type="text" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Ej: Ballena Principal" className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <input type="text" value={newAddress} onChange={(e) => setNewAddress(e.target.value)} placeholder="0x..." className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <input type="text" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Ej: Ballena" className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               {error && <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3"><p className="text-sm text-red-400">{error}</p></div>}
               <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 px-4 rounded-lg flex items-center justify-center gap-2">
                 <Plus className="w-4 h-4" />Añadir
@@ -472,7 +474,7 @@ function HyperliquidDashboard() {
               <div className="text-center max-w-md">
                 <Wallet className="w-20 h-20 mx-auto mb-6 text-slate-700" />
                 <h2 className="text-2xl font-bold text-slate-300 mb-3">Comienza a Trackear</h2>
-                <p className="text-slate-500">Añade wallets para monitorear staking, unstaking y ventas</p>
+                <p className="text-slate-500">Añade wallets para monitorear staking</p>
               </div>
             </div>
           ) : (
@@ -490,9 +492,8 @@ function HyperliquidDashboard() {
   );
 }
 
-function WalletCard({ wallet, data, tracking, loading, onDelete, onUpdateLabel, onResetTracking }) {
-  const [isEditingLabel, setIsEditingLabel] = useState(false);
-  const [editedLabel, setEditedLabel] = useState(wallet.label);
+// WalletCard - mismo código que antes
+function WalletCard({ wallet, data, tracking, loading, onDelete, onUpdateLabel }) {
   const [currentTime, setCurrentTime] = useState(Date.now());
 
   useEffect(() => {
@@ -500,17 +501,9 @@ function WalletCard({ wallet, data, tracking, loading, onDelete, onUpdateLabel, 
     return () => clearInterval(interval);
   }, []);
 
-  const handleSaveLabel = () => {
-    onUpdateLabel(wallet.id, editedLabel);
-    setIsEditingLabel(false);
-  };
-
-  const allBalances = data?.allBalances || [];
-  const totalHype = data?.totalHype || 0;
-  const hypeOnChain = data?.hypeOnChain || 0;
-  const hypeExchange = data?.hypeExchange || 0;
   const stakingAmount = data?.stakingAmount || 0;
   const withdraws = data?.withdraws || [];
+  const allBalances = data?.allBalances || [];
 
   let withdrawalData = null;
   if (withdraws.length > 0) {
@@ -548,10 +541,6 @@ function WalletCard({ wallet, data, tracking, loading, onDelete, onUpdateLabel, 
         <div className="flex items-center justify-center py-12">
           <RefreshCw className="w-6 h-6 animate-spin text-blue-500" />
         </div>
-      ) : data?.error ? (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4">
-          <p className="text-sm text-red-400">{data.error}</p>
-        </div>
       ) : (
         <>
           {stakingAmount > 0 && (
@@ -571,7 +560,7 @@ function WalletCard({ wallet, data, tracking, loading, onDelete, onUpdateLabel, 
             <div className="mb-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4">
               <div className="flex items-center gap-2 mb-3">
                 <Timer className="w-5 h-5 text-yellow-400" />
-                <span className="text-sm font-semibold text-yellow-300">Unstaking en Progreso</span>
+                <span className="text-sm font-semibold text-yellow-300">Unstaking</span>
               </div>
 
               <div className="grid grid-cols-4 gap-2 mb-3">
@@ -595,21 +584,14 @@ function WalletCard({ wallet, data, tracking, loading, onDelete, onUpdateLabel, 
 
               <div className="relative mb-3">
                 <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-yellow-500 to-green-500 transition-all duration-1000" style={{ width: `${withdrawalData.progress}%` }} />
-                </div>
-                <div className="flex justify-between mt-1 text-xs text-slate-500">
-                  <span>Inicio</span>
-                  <span className="font-medium text-yellow-400">{withdrawalData.progress.toFixed(1)}%</span>
-                  <span>7 días</span>
+                  <div className="h-full bg-gradient-to-r from-yellow-500 to-green-500" style={{ width: `${withdrawalData.progress}%` }} />
                 </div>
               </div>
 
               <div className="bg-slate-900/50 rounded p-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-slate-400">Cantidad</span>
-                  <span className="font-mono font-semibold text-yellow-300">
-                    {withdrawalData.amount.toLocaleString(undefined, { maximumFractionDigits: 0 })} HYPE
-                  </span>
+                  <span className="font-mono text-yellow-300">{withdrawalData.amount.toLocaleString()} HYPE</span>
                 </div>
               </div>
             </div>
@@ -617,22 +599,11 @@ function WalletCard({ wallet, data, tracking, loading, onDelete, onUpdateLabel, 
 
           {allBalances.length > 0 && (
             <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
-              <div className="flex items-center gap-2 mb-3">
-                <Coins className="w-4 h-4 text-emerald-400" />
-                <span className="text-sm font-medium">Balances</span>
-              </div>
               <div className="space-y-2 max-h-48 overflow-y-auto">
                 {allBalances.sort((a, b) => b.hold - a.hold).map((balance, idx) => (
-                  <div key={idx} className="bg-slate-900/50 rounded-lg p-2 flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-medium text-slate-300">{balance.coin}</span>
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${balance.location === 'wallet' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-blue-500/20 text-blue-400'}`}>
-                        {balance.location === 'wallet' ? 'On-chain' : 'Exchange'}
-                      </span>
-                    </div>
-                    <span className="text-xs font-mono text-slate-400">
-                      {balance.hold.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}
-                    </span>
+                  <div key={idx} className="bg-slate-900/50 rounded-lg p-2 flex justify-between">
+                    <span className="text-xs text-slate-300">{balance.coin}</span>
+                    <span className="text-xs font-mono text-slate-400">{balance.hold.toLocaleString()}</span>
                   </div>
                 ))}
               </div>
