@@ -146,8 +146,8 @@ function HyperliquidDashboard() {
       const nativeBalance = await getNativeBalance(wallet.address);
       console.log('Native HYPE balance:', nativeBalance);
 
-      // 1. SPOT EXCHANGE DATA (incluye withdraws y staking)
-      let spotData = { balances: [], withdraws: [], staking: '0' };
+      // 1. SPOT EXCHANGE DATA
+      let spotData = { balances: [], withdraws: [] };
       try {
         spotData = await fetchHyperliquidAPI({
           type: 'spotClearinghouseState',
@@ -158,16 +158,23 @@ function HyperliquidDashboard() {
         console.warn('Could not fetch spot state:', e);
       }
 
-      // 2. L1 STATE (backup para staking)
-      let l1Data = null;
+      // 2. STAKING DATA (endpoint específico)
+      let stakingInfo = { staked: '0' };
       try {
-        l1Data = await fetchHyperliquidAPI({
-          type: 'clearinghouseState',
+        stakingInfo = await fetchHyperliquidAPI({
+          type: 'spotMetaAndAssetCtxs'
+        });
+        console.log('Spot meta (for staking):', stakingInfo);
+        
+        // Buscar datos de staking del usuario
+        const userStaking = await fetchHyperliquidAPI({
+          type: 'userStakingState',
           user: wallet.address
         });
-        console.log('L1 clearinghouse data:', l1Data);
+        console.log('User staking state:', userStaking);
+        stakingInfo = userStaking || stakingInfo;
       } catch (e) {
-        console.warn('Could not fetch L1 state:', e);
+        console.warn('Could not fetch staking:', e);
       }
 
       // Obtener fills para calcular velocidad de venta
@@ -210,15 +217,19 @@ function HyperliquidDashboard() {
       const hypeExchange = parseFloat(exchangeBalances.find(b => b.coin === 'HYPE')?.hold || '0');
       const totalHype = hypeOnChain + hypeExchange;
       
-      // STAKING: viene en spotData.staking
-      let stakingAmount = parseFloat(spotData.staking || '0');
+      // STAKING: buscar en múltiples lugares
+      let stakingAmount = 0;
       
-      // Si no hay staking en spot, intentar de L1
-      if (stakingAmount === 0 && l1Data?.marginSummary) {
-        stakingAmount = parseFloat(l1Data.marginSummary.accountValue || '0');
+      // Primero intentar de userStakingState
+      if (stakingInfo.staked) {
+        stakingAmount = parseFloat(stakingInfo.staked);
+      } else if (stakingInfo.totalStaked) {
+        stakingAmount = parseFloat(stakingInfo.totalStaked);
+      } else if (stakingInfo.accountValue) {
+        stakingAmount = parseFloat(stakingInfo.accountValue);
       }
       
-      // WITHDRAWALS están en spotData.withdraws
+      // WITHDRAWALS
       const pendingWithdrawals = spotData.withdraws || [];
 
       console.log('Staking amount:', stakingAmount);
