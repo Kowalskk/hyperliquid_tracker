@@ -1,12 +1,47 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Wallet, Plus, X, Tag, TrendingUp, Menu, RefreshCw, Filter, Coins,
-  AlertCircle, CheckCircle2, Clock, Pause, TrendingDown
+  AlertCircle, CheckCircle2, Clock, Timer, TrendingDown, Activity, Zap, Target
 } from 'lucide-react';
 
 const QUICKNODE_RPC = 'https://withered-red-isle.hype-mainnet.quiknode.pro/0427da894d1271966f715dc78fd65eadc08c3571/evm';
 
-// Función para llamadas RPC
+// Utilidades de tiempo
+const formatTimeRemaining = (milliseconds) => {
+  if (milliseconds <= 0) return { days: 0, hours: 0, minutes: 0, seconds: 0, total: 0 };
+  
+  const seconds = Math.floor(milliseconds / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  
+  return {
+    days,
+    hours: hours % 24,
+    minutes: minutes % 60,
+    seconds: seconds % 60,
+    total: milliseconds
+  };
+};
+
+const calculateProgress = (startTime, endTime) => {
+  const now = Date.now();
+  const total = endTime - startTime;
+  const elapsed = now - startTime;
+  return Math.min(100, Math.max(0, (elapsed / total) * 100));
+};
+
+const formatETA = (milliseconds) => {
+  if (milliseconds <= 0 || !isFinite(milliseconds)) return 'Calculando...';
+  
+  const time = formatTimeRemaining(milliseconds);
+  
+  if (time.days > 0) return `${time.days}d ${time.hours}h`;
+  else if (time.hours > 0) return `${time.hours}h ${time.minutes}m`;
+  else if (time.minutes > 0) return `${time.minutes}m`;
+  else return `${time.seconds}s`;
+};
+
 const callRPC = async (method, params = []) => {
   try {
     const response = await fetch(QUICKNODE_RPC, {
@@ -40,7 +75,6 @@ const getNativeBalance = async (address) => {
   }
 };
 
-// Función para llamar a la API de Hyperliquid
 const fetchHyperliquidAPI = async (payload) => {
   try {
     const response = await fetch('https://api.hyperliquid.xyz/info', {
@@ -51,7 +85,6 @@ const fetchHyperliquidAPI = async (payload) => {
 
     if (response.ok) return await response.json();
 
-    // Intentar con proxy CORS
     const proxyResponse = await fetch('https://corsproxy.io/?' + encodeURIComponent('https://api.hyperliquid.xyz/info'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -74,18 +107,23 @@ const HyperliquidDashboard = () => {
   const [error, setError] = useState('');
   const [walletData, setWalletData] = useState({});
   const [loading, setLoading] = useState({});
+  const [salesTracking, setSalesTracking] = useState({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [filterTag, setFilterTag] = useState('');
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
 
   useEffect(() => {
     const savedWallets = localStorage.getItem('hyperliquid_wallets');
+    const savedTracking = localStorage.getItem('hyperliquid_sales_tracking');
+    
     if (savedWallets) {
-      try {
-        setWallets(JSON.parse(savedWallets));
-      } catch (e) {
-        console.error('Error loading wallets:', e);
-      }
+      try { setWallets(JSON.parse(savedWallets)); } 
+      catch (e) { console.error('Error loading wallets:', e); }
+    }
+    
+    if (savedTracking) {
+      try { setSalesTracking(JSON.parse(savedTracking)); } 
+      catch (e) { console.error('Error loading tracking:', e); }
     }
   }, []);
 
@@ -95,15 +133,19 @@ const HyperliquidDashboard = () => {
     }
   }, [wallets]);
 
+  useEffect(() => {
+    if (Object.keys(salesTracking).length > 0) {
+      localStorage.setItem('hyperliquid_sales_tracking', JSON.stringify(salesTracking));
+    }
+  }, [salesTracking]);
+
   const fetchWalletData = async (wallet) => {
     try {
       console.log(`Fetching data for wallet: ${wallet.address}`);
 
-      // 1. Balance on-chain
       const nativeBalance = await getNativeBalance(wallet.address);
       console.log('Native HYPE balance:', nativeBalance);
 
-      // 2. Exchange data
       let stateData = { balances: [], withdraws: [], staking: '0' };
       try {
         stateData = await fetchHyperliquidAPI({
@@ -115,13 +157,22 @@ const HyperliquidDashboard = () => {
         console.warn('Could not fetch exchange state:', e);
       }
 
-      // Procesar balances
+      // Obtener fills para calcular velocidad de venta
+      let fillsData = [];
+      try {
+        fillsData = await fetchHyperliquidAPI({
+          type: 'userFills',
+          user: wallet.address
+        });
+        console.log('Fills data:', fillsData?.length || 0, 'trades');
+      } catch (e) {
+        console.warn('Could not fetch fills:', e);
+      }
+
       const exchangeBalances = stateData.balances || [];
       
-      // Combinar todos los balances
       const allBalances = [];
       
-      // Añadir balance on-chain de HYPE
       if (nativeBalance > 0) {
         allBalances.push({
           coin: 'HYPE',
@@ -130,7 +181,6 @@ const HyperliquidDashboard = () => {
         });
       }
       
-      // Añadir balances del exchange
       exchangeBalances.forEach(b => {
         const hold = parseFloat(b.hold || '0');
         if (hold > 0) {
@@ -143,13 +193,42 @@ const HyperliquidDashboard = () => {
         }
       });
 
-      // Balance específico de HYPE
       const hypeOnChain = nativeBalance;
       const hypeExchange = parseFloat(exchangeBalances.find(b => b.coin === 'HYPE')?.hold || '0');
       const totalHype = hypeOnChain + hypeExchange;
-
-      // Staking
       const stakingAmount = parseFloat(stateData.staking || '0');
+
+      // Calcular velocidad de venta (últimas 24 horas)
+      const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
+      const recentHypeSells = fillsData.filter(fill => {
+        const fillTime = parseInt(fill.time);
+        return fill.coin === 'HYPE' && fill.side === 'A' && fillTime >= oneDayAgo;
+      });
+
+      const volumeSoldLast24h = recentHypeSells.reduce((total, fill) => {
+        return total + parseFloat(fill.sz);
+      }, 0);
+
+      // Verificar si el unstaking completó y debemos iniciar tracking
+      const prevData = walletData[wallet.id];
+      const prevWithdrawals = prevData?.withdraws || [];
+      const currentWithdrawals = stateData.withdraws || [];
+      
+      let tracking = salesTracking[wallet.id] || null;
+
+      // Si había withdrawals y ahora no hay, el unstaking completó
+      if (prevWithdrawals.length > 0 && currentWithdrawals.length === 0 && !tracking && totalHype > 0) {
+        tracking = {
+          initialBalance: totalHype,
+          startTime: Date.now(),
+          initialTimestamp: Date.now()
+        };
+        setSalesTracking(prev => ({
+          ...prev,
+          [wallet.id]: tracking
+        }));
+        console.log('Started sales tracking for wallet:', wallet.address);
+      }
 
       setWalletData(prev => ({
         ...prev,
@@ -160,7 +239,9 @@ const HyperliquidDashboard = () => {
           totalHype,
           stakingAmount,
           allBalances,
-          withdraws: stateData.withdraws || [],
+          withdraws: currentWithdrawals,
+          volumeSoldLast24h,
+          recentHypeSells,
           lastUpdate: Date.now(),
           error: null
         }
@@ -249,8 +330,14 @@ const HyperliquidDashboard = () => {
       delete newData[id];
       return newData;
     });
+    setSalesTracking(prev => {
+      const newTracking = { ...prev };
+      delete newTracking[id];
+      return newTracking;
+    });
     if (wallets.length === 1) {
       localStorage.removeItem('hyperliquid_wallets');
+      localStorage.removeItem('hyperliquid_sales_tracking');
     }
   };
 
@@ -258,6 +345,20 @@ const HyperliquidDashboard = () => {
     setWallets(wallets.map(w => 
       w.id === id ? { ...w, label: newLabel || 'Sin etiqueta' } : w
     ));
+  };
+
+  const handleResetTracking = (walletId) => {
+    const data = walletData[walletId];
+    if (data?.totalHype !== undefined) {
+      setSalesTracking(prev => ({
+        ...prev,
+        [walletId]: {
+          initialBalance: data.totalHype,
+          startTime: Date.now(),
+          initialTimestamp: Date.now()
+        }
+      }));
+    }
   };
 
   const uniqueTags = [...new Set(wallets.map(w => w.label))].sort();
@@ -277,7 +378,7 @@ const HyperliquidDashboard = () => {
             <TrendingUp className="w-8 h-8 text-blue-500" />
             <div>
               <h1 className="text-2xl font-bold text-slate-100">Hyperliquid Tracker</h1>
-              <p className="text-sm text-slate-400">Wallet & Exchange Monitor</p>
+              <p className="text-sm text-slate-400">Staking, Unstaking & Sales Monitor</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -368,7 +469,7 @@ const HyperliquidDashboard = () => {
                   type="text"
                   value={newAddress}
                   onChange={(e) => setNewAddress(e.target.value)}
-                  placeholder="0xcd1a5fb7c3a5ad2a13fce54853b3c3a01396e525"
+                  placeholder="0x81501f4da49c18bb3f69e4abfeb4d2346ac5fce8"
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm
                     focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
@@ -380,7 +481,7 @@ const HyperliquidDashboard = () => {
                   type="text"
                   value={newLabel}
                   onChange={(e) => setNewLabel(e.target.value)}
-                  placeholder="Ej: Ballena Insider"
+                  placeholder="Ej: Ballena Principal"
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm
                     focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
@@ -416,8 +517,10 @@ const HyperliquidDashboard = () => {
               <div className="space-y-2">
                 {filteredWallets.map(wallet => {
                   const data = walletData[wallet.id];
+                  const tracking = salesTracking[wallet.id];
                   const hasWithdrawals = data?.withdraws?.length > 0;
                   const hasStaking = data?.stakingAmount > 0;
+                  const isSelling = tracking && data?.volumeSoldLast24h > 0;
                   
                   return (
                     <div key={wallet.id} className="bg-slate-800 rounded-lg p-3">
@@ -431,15 +534,25 @@ const HyperliquidDashboard = () => {
                             <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
                             Cargando...
                           </div>
+                        ) : isSelling ? (
+                          <div className="flex items-center gap-2 text-xs text-red-400">
+                            <TrendingDown className="w-3 h-3" />
+                            VENDIENDO
+                          </div>
+                        ) : tracking ? (
+                          <div className="flex items-center gap-2 text-xs text-yellow-400">
+                            <Activity className="w-3 h-3" />
+                            TRACKING
+                          </div>
                         ) : hasWithdrawals ? (
                           <div className="flex items-center gap-2 text-xs text-yellow-400">
                             <Clock className="w-3 h-3" />
-                            Unstaking
+                            UNSTAKING
                           </div>
                         ) : hasStaking ? (
                           <div className="flex items-center gap-2 text-xs text-green-400">
                             <CheckCircle2 className="w-3 h-3" />
-                            Staked
+                            STAKED
                           </div>
                         ) : (
                           <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -465,7 +578,7 @@ const HyperliquidDashboard = () => {
                   Comienza a Trackear
                 </h2>
                 <p className="text-slate-500">
-                  Añade wallets para monitorear balances on-chain y en el exchange
+                  Añade wallets para monitorear staking, unstaking y ventas en tiempo real
                 </p>
               </div>
             </div>
@@ -476,9 +589,11 @@ const HyperliquidDashboard = () => {
                   key={wallet.id}
                   wallet={wallet}
                   data={walletData[wallet.id]}
+                  tracking={salesTracking[wallet.id]}
                   loading={loading[wallet.id]}
                   onDelete={handleDeleteWallet}
                   onUpdateLabel={handleUpdateLabel}
+                  onResetTracking={handleResetTracking}
                 />
               ))}
             </div>
@@ -497,9 +612,17 @@ const HyperliquidDashboard = () => {
   );
 };
 
-const WalletCard = ({ wallet, data, loading, onDelete, onUpdateLabel }) => {
+const WalletCard = ({ wallet, data, tracking, loading, onDelete, onUpdateLabel, onResetTracking }) => {
   const [isEditingLabel, setIsEditingLabel] = useState(false);
   const [editedLabel, setEditedLabel] = useState(wallet.label);
+  const [currentTime, setCurrentTime] = useState(Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleSaveLabel = () => {
     onUpdateLabel(wallet.id, editedLabel);
@@ -512,6 +635,56 @@ const WalletCard = ({ wallet, data, loading, onDelete, onUpdateLabel }) => {
   const hypeExchange = data?.hypeExchange || 0;
   const stakingAmount = data?.stakingAmount || 0;
   const withdraws = data?.withdraws || [];
+  const volumeSoldLast24h = data?.volumeSoldLast24h || 0;
+
+  // Calcular datos del withdrawal
+  let withdrawalData = null;
+  if (withdraws.length > 0) {
+    const withdrawal = withdraws[0];
+    const startTime = parseInt(withdrawal.time);
+    const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+    const endTime = startTime + SEVEN_DAYS_MS;
+    const timeRemaining = formatTimeRemaining(endTime - currentTime);
+    const progress = calculateProgress(startTime, endTime);
+    const isReady = timeRemaining.total <= 0;
+
+    withdrawalData = {
+      amount: parseFloat(withdrawal.amount),
+      startTime,
+      endTime,
+      timeRemaining,
+      progress,
+      isReady
+    };
+  }
+
+  // Calcular datos de venta
+  let salesData = null;
+  if (tracking && data?.totalHype !== undefined) {
+    const initialBalance = tracking.initialBalance;
+    const currentBalance = data.totalHype;
+    const sold = Math.max(0, initialBalance - currentBalance);
+    const soldPercentage = initialBalance > 0 ? (sold / initialBalance) * 100 : 0;
+    
+    // ETA basado en volumen de 24h
+    let eta = null;
+    if (volumeSoldLast24h > 0 && currentBalance > 0) {
+      const daysToEmpty = currentBalance / volumeSoldLast24h;
+      eta = daysToEmpty * 24 * 60 * 60 * 1000;
+    }
+
+    const isSelling = volumeSoldLast24h > 0;
+
+    salesData = {
+      initialBalance,
+      currentBalance,
+      sold,
+      soldPercentage,
+      volumeSoldLast24h,
+      eta,
+      isSelling
+    };
+  }
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-slate-700 transition-all">
@@ -553,6 +726,193 @@ const WalletCard = ({ wallet, data, loading, onDelete, onUpdateLabel }) => {
         </div>
       ) : (
         <>
+          {/* Staking Info */}
+          {stakingAmount > 0 && (
+            <div className="mb-4 bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                <span className="text-sm font-semibold text-emerald-300">Staking Activo</span>
+              </div>
+              <div className="text-3xl font-bold text-emerald-400 mb-1">
+                {stakingAmount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+              </div>
+              <div className="text-xs text-emerald-300/70">HYPE en staking</div>
+            </div>
+          )}
+
+          {/* Unstaking Countdown */}
+          {withdrawalData && !withdrawalData.isReady && (
+            <div className="mb-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Timer className="w-5 h-5 text-yellow-400" />
+                <span className="text-sm font-semibold text-yellow-300">Unstaking en Progreso</span>
+              </div>
+
+              <div className="grid grid-cols-4 gap-2 mb-3">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-yellow-100">{withdrawalData.timeRemaining.days}</div>
+                  <div className="text-xs text-yellow-400">días</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-yellow-100">{withdrawalData.timeRemaining.hours}</div>
+                  <div className="text-xs text-yellow-400">hrs</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-yellow-100">{withdrawalData.timeRemaining.minutes}</div>
+                  <div className="text-xs text-yellow-400">min</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-yellow-100">{withdrawalData.timeRemaining.seconds}</div>
+                  <div className="text-xs text-yellow-400">seg</div>
+                </div>
+              </div>
+
+              <div className="relative mb-3">
+                <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-gradient-to-r from-yellow-500 to-green-500 transition-all duration-1000"
+                    style={{ width: `${withdrawalData.progress}%` }}
+                  />
+                </div>
+                <div className="flex justify-between mt-1 text-xs text-slate-500">
+                  <span>Inicio</span>
+                  <span className="font-medium text-yellow-400">{withdrawalData.progress.toFixed(1)}%</span>
+                  <span>7 días</span>
+                </div>
+              </div>
+
+              <div className="bg-slate-900/50 rounded p-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-400">Cantidad</span>
+                  <span className="font-mono font-semibold text-yellow-300">
+                    {withdrawalData.amount.toLocaleString(undefined, { maximumFractionDigits: 0 })} HYPE
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Ready to Claim */}
+          {withdrawalData?.isReady && (
+            <div className="mb-4 bg-green-500/10 border border-green-500/20 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <CheckCircle2 className="w-6 h-6 text-green-400" />
+                <span className="text-lg font-bold text-green-400">¡Listo para Retirar!</span>
+              </div>
+              <div className="text-2xl font-bold text-green-300 mb-1">
+                {withdrawalData.amount.toLocaleString(undefined, { maximumFractionDigits: 0 })} HYPE
+              </div>
+              <div className="text-xs text-green-400">Ya puedes hacer claim en Hyperliquid</div>
+            </div>
+          )}
+
+          {/* Sales Tracking */}
+          {salesData && (
+            <div className="mb-4 bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-purple-400" />
+                  <span className="text-sm font-medium text-slate-300">Tracking de Ventas</span>
+                </div>
+                <button
+                  onClick={() => onResetTracking(wallet.id)}
+                  className="text-xs text-slate-500 hover:text-slate-300"
+                >
+                  Reset
+                </button>
+              </div>
+
+              {/* Progress Bar */}
+              <div className="mb-4">
+                <div className="flex justify-between text-xs text-slate-400 mb-2">
+                  <span>Vendido</span>
+                  <span className="font-mono">{salesData.soldPercentage.toFixed(1)}%</span>
+                </div>
+                <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+                  <div 
+                    className={`h-full transition-all duration-1000 ${
+                      salesData.isSelling 
+                        ? 'bg-gradient-to-r from-red-500 to-orange-500' 
+                        : 'bg-gradient-to-r from-slate-600 to-slate-500'
+                    }`}
+                    style={{ width: `${salesData.soldPercentage}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Balances */}
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Inicial</p>
+                  <p className="text-sm font-mono font-semibold text-slate-300">
+                    {salesData.initialBalance.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Actual</p>
+                  <p className="text-sm font-mono font-semibold text-slate-300">
+                    {salesData.currentBalance.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  </p>
+                </div>
+              </div>
+
+              {/* Vendido Total */}
+              <div className="bg-slate-900/50 rounded-lg p-3 mb-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-slate-500">Vendido Total</span>
+                  <span className={`text-sm font-mono font-semibold ${
+                    salesData.sold > 0 ? 'text-red-400' : 'text-slate-400'
+                  }`}>
+                    {salesData.sold.toLocaleString(undefined, { maximumFractionDigits: 0 })} HYPE
+                  </span>
+                </div>
+              </div>
+
+              {/* Velocidad de Venta */}
+              {salesData.isSelling && (
+                <>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Zap className="w-4 h-4 text-orange-400" />
+                    <span className="text-xs font-medium text-slate-300">Velocidad (24h)</span>
+                  </div>
+                  <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 mb-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-slate-400">Vendiendo</span>
+                      <span className="text-sm font-mono font-semibold text-red-400">
+                        {salesData.volumeSoldLast24h.toLocaleString(undefined, { maximumFractionDigits: 0 })} HYPE/día
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* ETA */}
+                  {salesData.eta && (
+                    <>
+                      <div className="flex items-center gap-2 mb-2">
+                        <Target className="w-4 h-4 text-blue-400" />
+                        <span className="text-xs font-medium text-slate-300">Tiempo Estimado</span>
+                      </div>
+                      <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3">
+                        <div className="flex justify-between items-center">
+                          <span className="text-xs text-slate-400">ETA a Balance 0</span>
+                          <span className="text-sm font-mono font-semibold text-blue-400">
+                            {formatETA(salesData.eta)}
+                          </span>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+
+              {!salesData.isSelling && salesData.currentBalance > 0 && (
+                <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-yellow-400" />
+                  <span className="text-xs text-yellow-300">Sin ventas en las últimas 24h</span>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* HYPE Balance Summary */}
           {totalHype > 0 && (
             <div className="mb-4 bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-lg p-4 border border-blue-500/20">
@@ -560,63 +920,34 @@ const WalletCard = ({ wallet, data, loading, onDelete, onUpdateLabel }) => {
                 <Coins className="w-5 h-5 text-blue-400" />
                 <span className="text-sm font-semibold">Balance HYPE</span>
               </div>
-              <div className="text-3xl font-bold text-slate-100 mb-3">
-                {totalHype.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+              <div className="text-2xl font-bold text-slate-100 mb-3">
+                {totalHype.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="bg-slate-900/50 rounded p-2">
                   <p className="text-xs text-slate-500">On-Chain</p>
                   <p className="text-sm font-mono text-emerald-400">
-                    {hypeOnChain.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                    {hypeOnChain.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                   </p>
                 </div>
                 <div className="bg-slate-900/50 rounded p-2">
                   <p className="text-xs text-slate-500">Exchange</p>
                   <p className="text-sm font-mono text-blue-400">
-                    {hypeExchange.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                    {hypeExchange.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                   </p>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Staking */}
-          {stakingAmount > 0 && (
-            <div className="mb-4 bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-emerald-300">Staking</span>
-                <span className="text-sm font-mono font-semibold text-emerald-400">
-                  {stakingAmount.toLocaleString()} USD
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Pending Withdrawals */}
-          {withdraws.length > 0 && (
-            <div className="mb-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3">
-              <div className="flex items-center gap-2 mb-2">
-                <Clock className="w-4 h-4 text-yellow-400" />
-                <span className="text-sm font-semibold text-yellow-300">
-                  {withdraws.length} Retiro{withdraws.length > 1 ? 's' : ''} Pendiente{withdraws.length > 1 ? 's' : ''}
-                </span>
-              </div>
-              {withdraws.map((w, idx) => (
-                <div key={idx} className="text-xs text-yellow-200">
-                  {parseFloat(w.amount).toLocaleString()} USD
-                </div>
-              ))}
-            </div>
-          )}
-
           {/* All Balances */}
           {allBalances.length > 0 && (
-            <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+            <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700 mb-4">
               <div className="flex items-center gap-2 mb-3">
                 <Coins className="w-4 h-4 text-emerald-400" />
                 <span className="text-sm font-medium">Todos los Balances</span>
               </div>
-              <div className="space-y-2 max-h-64 overflow-y-auto">
+              <div className="space-y-2 max-h-48 overflow-y-auto">
                 {allBalances
                   .sort((a, b) => b.hold - a.hold)
                   .map((balance, idx) => (
