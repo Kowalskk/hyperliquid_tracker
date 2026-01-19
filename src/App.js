@@ -146,7 +146,7 @@ function HyperliquidDashboard() {
       const nativeBalance = await getNativeBalance(wallet.address);
       console.log('Native HYPE balance:', nativeBalance);
 
-      // 1. SPOT EXCHANGE DATA
+      // 1. SPOT EXCHANGE DATA (incluye withdraws y staking)
       let spotData = { balances: [], withdraws: [], staking: '0' };
       try {
         spotData = await fetchHyperliquidAPI({
@@ -158,28 +158,16 @@ function HyperliquidDashboard() {
         console.warn('Could not fetch spot state:', e);
       }
 
-      // 2. L1 STAKING DATA
-      let stakingData = null;
+      // 2. L1 STATE (backup para staking)
+      let l1Data = null;
       try {
-        stakingData = await fetchHyperliquidAPI({
-          type: 'userStaking',
+        l1Data = await fetchHyperliquidAPI({
+          type: 'clearinghouseState',
           user: wallet.address
         });
-        console.log('L1 Staking data:', stakingData);
+        console.log('L1 clearinghouse data:', l1Data);
       } catch (e) {
-        console.warn('Could not fetch staking data:', e);
-      }
-
-      // 3. WITHDRAWAL QUEUE
-      let withdrawalData = null;
-      try {
-        withdrawalData = await fetchHyperliquidAPI({
-          type: 'userWithdrawalRequests', 
-          user: wallet.address
-        });
-        console.log('Withdrawal requests:', withdrawalData);
-      } catch (e) {
-        console.warn('Could not fetch withdrawals:', e);
+        console.warn('Could not fetch L1 state:', e);
       }
 
       // Obtener fills para calcular velocidad de venta
@@ -222,11 +210,19 @@ function HyperliquidDashboard() {
       const hypeExchange = parseFloat(exchangeBalances.find(b => b.coin === 'HYPE')?.hold || '0');
       const totalHype = hypeOnChain + hypeExchange;
       
-      // STAKING EN L1
-      const stakingAmount = stakingData ? parseFloat(stakingData.staked || '0') : 0;
+      // STAKING: viene en spotData.staking
+      let stakingAmount = parseFloat(spotData.staking || '0');
       
-      // WITHDRAWALS (unstaking queue)
-      const pendingWithdrawals = withdrawalData || [];
+      // Si no hay staking en spot, intentar de L1
+      if (stakingAmount === 0 && l1Data?.marginSummary) {
+        stakingAmount = parseFloat(l1Data.marginSummary.accountValue || '0');
+      }
+      
+      // WITHDRAWALS están en spotData.withdraws
+      const pendingWithdrawals = spotData.withdraws || [];
+
+      console.log('Staking amount:', stakingAmount);
+      console.log('Pending withdrawals:', pendingWithdrawals);
 
       // Calcular velocidad de venta (últimas 24 horas)
       const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
